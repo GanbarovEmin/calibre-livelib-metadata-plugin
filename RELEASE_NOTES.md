@@ -13,7 +13,7 @@ First public release of `LiveLib Metadata`, a Calibre metadata source plugin for
 
 ## Install
 
-Download `LiveLib Metadata.zip` from the release assets and install it in Calibre:
+Download `LiveLib.Metadata.zip` from the release assets and install it in Calibre:
 
 `Preferences -> Plugins -> Load plugin from file`
 
@@ -21,4 +21,4 @@ Restart Calibre after installation.
 
 ## Update
 
-For future releases, download the newest `LiveLib Metadata.zip` and install it through the same Calibre plugin dialog. Calibre will replace the older plugin after restart.
+For future releases, download the newest `LiveLib.Metadata.zip` and install it through the same Calibre plugin dialog. Calibre will replace the older plugin after restart.

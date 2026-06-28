@@ -26,7 +26,7 @@ It improves Calibre metadata lookup for books that are better represented on Rus
 
 ## Installation
 
-1. Download `LiveLib Metadata.zip` from the latest GitHub release.
+1. Download `LiveLib.Metadata.zip` from the latest GitHub release.
 2. Open Calibre.
 3. Go to `Preferences -> Plugins -> Load plugin from file`.
 4. Select `LiveLib Metadata.zip`.
@@ -35,7 +35,7 @@ It improves Calibre metadata lookup for books that are better represented on Rus
 
 ## Updating
 
-Download the new `LiveLib Metadata.zip` from the latest release and install it through `Load plugin from file` again. Calibre will replace the previous version after restart.
+Download the new `LiveLib.Metadata.zip` from the latest release and install it through `Load plugin from file` again. Calibre will replace the previous version after restart.
 
 This repository also includes a GitHub Actions release workflow. When a new tag like `v0.3.2` is pushed, GitHub builds a fresh plugin zip and attaches it to the release automatically.
 
@@ -48,7 +48,7 @@ This repository also includes a GitHub Actions release workflow. When a new tag 
 The build output is written to:
 
 ```text
-dist/LiveLib Metadata.zip
+dist/LiveLib.Metadata.zip
 ```
 
 ## Notes
