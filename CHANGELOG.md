@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.2 - 2026-06-28
+
+- Fix a Calibre 9.10 cover-search crash when LiveLib search HTML triggers an `lxml` parser error.
+- Parse LiveLib beta search results from the embedded Next.js `searchData` payload before falling back to DOM parsing.
+- Keep returning LiveLib candidates when DOM parsing fails, including the exact `Битва за рейтинг (Альфа-6)` result.
+- Harden LiveLib HTML parsing with recover/huge-tree mode and invalid-control-character cleanup.
+
 ## v0.3.1 - 2026-06-28
 
 - Prefer high-resolution LiveLib cover URLs using the `/o/...jpeg` form.

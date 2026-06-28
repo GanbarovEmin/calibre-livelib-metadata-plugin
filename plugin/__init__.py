@@ -74,9 +74,67 @@ def title_match_enough(query_title, result_title):
     return len(set(q_tokens) & r_tokens) >= min(2, len(q_tokens))
 
 
+def clean_html(raw):
+    return re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', raw or '')
+
+
+def safe_html_fromstring(raw):
+    parser = html.HTMLParser(recover=True, huge_tree=True, encoding='utf-8')
+    return html.fromstring(clean_html(raw), parser=parser)
+
+
+def extract_balanced_json(text, start):
+    start = text.find('{', start)
+    if start < 0:
+        return None
+    depth = 0
+    in_string = False
+    escaped = False
+    for pos in range(start, len(text)):
+        char = text[pos]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == '\\':
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == '{':
+            depth += 1
+        elif char == '}':
+            depth -= 1
+            if depth == 0:
+                return text[start:pos + 1]
+    return None
+
+
+def decode_next_payload(raw):
+    cleaned = clean_html(raw)
+    chunks = []
+    for match in re.finditer(r'self\.__next_f\.push\(\[1,"((?:\\.|[^"\\])*)"\]\)</script>', cleaned, re.DOTALL):
+        try:
+            chunks.append(json.loads('"%s"' % match.group(1)))
+        except Exception:
+            continue
+    if chunks:
+        return '\n'.join(chunks)
+    return unescape(cleaned).replace('\\"', '"').replace('\\/', '/')
+
+
+def source_rating(value):
+    try:
+        rating = float(as_unicode(value).replace(',', '.'))
+    except Exception:
+        return None
+    return rating / 2 if rating > 5 else rating
+
+
 def extract_livelib_json(raw):
     try:
-        root = html.fromstring(raw)
+        root = safe_html_fromstring(raw)
         for script in root.xpath('//script[@type="application/ld+json"]/text()'):
             try:
                 payload = json.loads(script)
@@ -139,7 +197,7 @@ def livelib_cover_candidates(url):
 
 def compact_page_text(raw):
     try:
-        root = html.fromstring(raw)
+        root = safe_html_fromstring(raw)
         text = root.text_content()
     except Exception:
         text = raw
@@ -249,7 +307,7 @@ class LiveLibMetadata(Source):
     name = 'LiveLib Metadata'
     description = 'Downloads Russian metadata and covers from LitRes, LiveLib, and FantLab'
     author = 'OpenAI Codex for Emin'
-    version = (0, 3, 1)
+    version = (0, 3, 2)
     minimum_calibre_version = (6, 0, 0)
 
     capabilities = frozenset(['identify', 'cover'])
@@ -525,10 +583,66 @@ class LiveLibMetadata(Source):
         item = payload.get('data') or payload
         return self.metadata_from_litres_candidate(candidate, item=item)
 
-    def parse_search_results(self, raw, query_title, query_authors):
-        root = html.fromstring(raw)
+    def parse_beta_search_payload(self, raw, query_title, query_authors):
+        decoded = decode_next_payload(raw)
         candidates = []
         seen = set()
+        pos = 0
+        marker = '"searchData":'
+        while True:
+            pos = decoded.find(marker, pos)
+            if pos < 0:
+                break
+            json_text = extract_balanced_json(decoded, pos + len(marker))
+            pos += len(marker)
+            if not json_text:
+                continue
+            try:
+                data = json.loads(json_text)
+            except Exception:
+                continue
+            rows = ((data.get('payload') or {}).get('data') or [])
+            for row in rows:
+                if row.get('type') != 'art_editions':
+                    continue
+                item = row.get('instance') or {}
+                href = item.get('url') or ''
+                if '/book/' not in href or href in seen:
+                    continue
+                author_names = [
+                    author.get('full_name') for author in item.get('authors') or []
+                    if author.get('full_name')
+                ]
+                result_author = ', '.join(author_names)
+                result_title = item.get('title') or ''
+                score = score_match(query_title, query_authors, result_title, result_author)
+                if score < 50:
+                    continue
+                seen.add(href)
+                cover_url = item.get('cover_url')
+                if cover_url and cover_url.startswith('/'):
+                    cover_url = BETA_BASE_URL + cover_url
+                stats = item.get('stats') or {}
+                rating = source_rating(stats.get('rating'))
+                candidates.append({
+                    'source': 'livelib',
+                    'score': score + 8,
+                    'url': urljoin(BETA_BASE_URL, href),
+                    'title': result_title,
+                    'author': result_author or (query_authors or ['Unknown'])[0],
+                    'cover_url': cover_url,
+                    'rating': as_unicode(rating) if rating is not None else None,
+                })
+        return candidates
+
+    def parse_search_results(self, raw, query_title, query_authors):
+        candidates = self.parse_beta_search_payload(raw, query_title, query_authors)
+        seen = {candidate['url'] for candidate in candidates}
+        try:
+            root = safe_html_fromstring(raw)
+        except Exception:
+            candidates.sort(key=lambda row: row['score'], reverse=True)
+            return candidates
         for block in root.xpath('//div[contains(@class, "object-edition")]'):
             link = block.xpath('.//div[contains(@class, "brow-title")]/a[contains(@class, "title")]')
             author = block.xpath('.//a[contains(@class, "description")]/text()')
@@ -537,9 +651,11 @@ class LiveLibMetadata(Source):
             href = link[0].get('href') or ''
             if not href.startswith('/book/'):
                 continue
-            if href in seen:
+            url = urljoin(BASE_URL, href)
+            if href in seen or url in seen:
                 continue
             seen.add(href)
+            seen.add(url)
             result_title = unescape(' '.join(link[0].xpath('.//text()'))).strip()
             result_author = unescape(author[0]).strip()
             score = score_match(query_title, query_authors, result_title, result_author)
@@ -560,7 +676,7 @@ class LiveLibMetadata(Source):
             candidates.append({
                 'source': 'livelib',
                 'score': score,
-                'url': urljoin(BASE_URL, href),
+                'url': url,
                 'title': result_title,
                 'author': result_author,
                 'cover_url': cover_url,
@@ -569,7 +685,8 @@ class LiveLibMetadata(Source):
 
         for link in root.xpath('//a[contains(@href, "/book/") and normalize-space()]'):
             href = link.get('href') or ''
-            if '/book/' not in href or href in seen:
+            url = urljoin(BETA_BASE_URL, href)
+            if '/book/' not in href or href in seen or url in seen:
                 continue
             result_title = unescape(' '.join(link.xpath('.//text()'))).strip()
             if not result_title:
@@ -601,12 +718,13 @@ class LiveLibMetadata(Source):
             if score < 50:
                 continue
             seen.add(href)
+            seen.add(url)
             if cover_url and cover_url.startswith('/'):
                 cover_url = BETA_BASE_URL + cover_url
             candidates.append({
                 'source': 'livelib',
                 'score': score,
-                'url': urljoin(BETA_BASE_URL, href),
+                'url': url,
                 'title': result_title,
                 'author': result_author or (query_authors or ['Unknown'])[0],
                 'cover_url': cover_url,
