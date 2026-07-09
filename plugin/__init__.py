@@ -30,6 +30,10 @@ USER_AGENT = (
     'Chrome/126.0.0.0 Safari/537.36'
 )
 
+# A candidate at or above this score already matches title and author closely
+# enough that the slow, ddos-guard-prone legacy livelib.ru search can be skipped.
+STRONG_MATCH_SCORE = 100
+
 
 def norm(value):
     value = (value or '').casefold().replace('ё', 'е')
@@ -307,7 +311,7 @@ class LiveLibMetadata(Source):
     name = 'LiveLib Metadata'
     description = 'Downloads Russian metadata and covers from LitRes, LiveLib, and FantLab'
     author = 'OpenAI Codex for Emin'
-    version = (0, 3, 2)
+    version = (0, 3, 3)
     minimum_calibre_version = (6, 0, 0)
 
     capabilities = frozenset(['identify', 'cover'])
@@ -420,13 +424,23 @@ class LiveLibMetadata(Source):
             if not query:
                 return
             candidates = self.search_litres(log, title, authors, timeout)
-            for url in (
-                    BETA_BASE_URL + '/search?q=' + quote(query),
-                    BASE_URL + '/find/' + quote(query),
-            ):
+            # Always run the fast beta search; only fall back to the slow legacy
+            # livelib.ru/find search when nothing strong has been found yet.
+            search_urls = [BETA_BASE_URL + '/search?q=' + quote(query)]
+            for url in search_urls:
                 log.info('LiveLib search: ' + url)
                 try:
                     raw = self.fetch_url(url, timeout)
+                except Exception as err:
+                    log.exception('LiveLib search failed: %s' % as_unicode(err))
+                    raw = None
+                if raw:
+                    candidates.extend(self.parse_search_results(raw, title, authors))
+            if not any(c['score'] >= STRONG_MATCH_SCORE for c in candidates):
+                legacy_url = BASE_URL + '/find/' + quote(query)
+                log.info('LiveLib search: ' + legacy_url)
+                try:
+                    raw = self.fetch_url(legacy_url, timeout)
                 except Exception as err:
                     log.exception('LiveLib search failed: %s' % as_unicode(err))
                     raw = None
@@ -457,13 +471,11 @@ class LiveLibMetadata(Source):
                     if livelib_id:
                         self.cache_identifier_to_cover_url(livelib_id, candidate['cover_url'])
                         mi.has_cover = True
-            if mi is not None and candidate.get('cover_url') and not mi.cover_data[1]:
-                try:
-                    self.attach_cover_data(mi, candidate['cover_url'], timeout)
-                except Exception as err:
-                    log.exception('Cover download failed for %s: %s' % (candidate.get('cover_url'), as_unicode(err)))
             if mi is None:
                 continue
+            # Cover bytes are intentionally NOT downloaded here. Calibre fetches
+            # covers separately via download_cover() using the URLs cached above,
+            # so downloading them during identify would only duplicate the work.
             mi.source_relevance = -candidate['score']
             result_queue.put(mi)
 
@@ -922,23 +934,49 @@ class LiveLibMetadata(Source):
                 return candidate['cover_url']
         return None
 
+    def find_all_cover_urls(self, log, result_queue_abort, title, authors, identifiers, timeout):
+        """Collect cover URLs from every matched source, ordered by relevance."""
+        urls = []
+        seen = set()
+
+        def add(url):
+            if url and url not in seen:
+                seen.add(url)
+                urls.append(url)
+
+        add(self.get_cached_cover_url(identifiers))
+        if title or authors:
+            q = Queue()
+            self.identify(log, q, result_queue_abort, title=title, authors=authors,
+                          identifiers=identifiers, timeout=timeout)
+            # Drain the whole queue so covers from every matched source (LitRes,
+            # LiveLib, FantLab) are gathered, not just the single top-scoring hit.
+            while True:
+                try:
+                    mi = q.get_nowait()
+                except Empty:
+                    break
+                add(self.get_cached_cover_url(mi.identifiers))
+        if not urls and (title or authors):
+            add(self.find_cover_url_direct(log, title=title, authors=authors, timeout=timeout))
+        return urls
+
     def download_cover(self, log, result_queue, abort, title=None, authors=None,
                        identifiers=None, timeout=30, get_best_cover=False):
         identifiers = identifiers or {}
-        url = self.get_cached_cover_url(identifiers)
-        if not url and (title or authors):
-            q = Queue()
-            self.identify(log, q, abort, title=title, authors=authors,
-                          identifiers=identifiers, timeout=timeout)
-            try:
-                mi = q.get_nowait()
-            except Empty:
-                mi = None
-            if mi:
-                url = self.get_cached_cover_url(mi.identifiers)
-        if not url and (title or authors):
-            url = self.find_cover_url_direct(log, title=title, authors=authors, timeout=timeout)
-        if url:
-            self.download_multiple_covers(title, authors, livelib_cover_candidates(url), get_best_cover,
+        urls = self.find_all_cover_urls(log, abort, title, authors, identifiers, timeout)
+        if not urls:
+            return
+        # Expand each source URL into its resolution variants (e.g. the LiveLib
+        # original /o/...jpeg plus the preview) and download them all together.
+        candidates = []
+        seen = set()
+        for url in urls:
+            for candidate in livelib_cover_candidates(url):
+                if candidate and candidate not in seen:
+                    seen.add(candidate)
+                    candidates.append(candidate)
+        if candidates:
+            self.download_multiple_covers(title, authors, candidates, get_best_cover,
                                           timeout, result_queue, abort, log,
                                           prefs_name=None)

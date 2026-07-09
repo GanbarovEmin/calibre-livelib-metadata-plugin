@@ -1,11 +1,11 @@
-# LiveLib Metadata for Calibre v0.3.2
+# LiveLib Metadata for Calibre v0.3.3
 
 Patch release of `LiveLib Metadata`, a Calibre metadata source plugin for Russian-language book libraries.
 
 ## Highlights
 
-- Fixes a Calibre 9.10 cover-search crash caused by LiveLib search HTML parser failures.
-- Reads LiveLib beta search results from the embedded Next.js payload, improving exact Russian-title matches.
+- Fixes missing LitRes covers by offering covers from every matched source (LitRes, LiveLib, FantLab) together.
+- Faster identification: cover bytes are no longer downloaded during identify, and the slow legacy livelib.ru search is skipped when a strong match is already found.
 - Searches LitRes, LiveLib, and FantLab.
 - Uses LiveLib beta pages as the primary Russian metadata fallback.
 - Downloads Russian descriptions, genres, ratings, ISBN, publisher, publication year, and edition details.
