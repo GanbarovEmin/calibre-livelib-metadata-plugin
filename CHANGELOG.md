@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.3 - 2026-07-09
+
+- Fix missing LitRes covers: `download_cover` now aggregates covers from every matched source (LitRes, LiveLib, FantLab) instead of only the single top-scoring result.
+- Speed up identify by no longer downloading cover image bytes during identification; Calibre fetches covers separately from the cached URLs.
+- Skip the slow, ddos-guard-prone legacy `www.livelib.ru/find` search when LitRes or the beta search already produced a strong title/author match.
+
 ## v0.3.2 - 2026-06-28
 
 - Fix a Calibre 9.10 cover-search crash when LiveLib search HTML triggers an `lxml` parser error.
