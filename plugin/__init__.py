@@ -21,7 +21,7 @@ from calibre.ebooks.metadata.sources.base import Source
 
 BASE_URL = 'https://www.livelib.ru'
 BETA_BASE_URL = 'https://beta.livelib.ru'
-FANTLAB_BASE_URL = 'https://api.fantlab.ru'
+FANTLAB_BASE_URL = 'https://fantlab.ru'
 FANTLAB_API_BASE_URL = 'https://api.fantlab.ru'
 LITRES_API_BASE = 'https://api.litres.ru/foundation/api'
 LITRES_WEB_BASE = 'https://www.litres.ru'
