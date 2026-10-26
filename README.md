@@ -26,8 +26,7 @@ poor matches, or no cover at all, this plugin is for you.
   has no native fields for most of these.
 - **Accurate matching.** Rejects weak title/author matches so a book is not overwritten by a
   same-title work from a different author.
-- **Identifiers.** Stores `litres`, `livelib`, and `fantlab` identifiers so repeat lookups and cover
-  downloads are fast and exact.
+- **Identifiers.** Stores `litres`, `livelib`, and `fantlab` identifiers so repeat lookups and cover downloads are fast and exact. FantLab identifiers retain the resource path returned by its API (for example, `work123`) so links use the correct FantLab page type. Numeric-only FantLab IDs saved by older plugin versions need to be refreshed to recover that page type.
 
 ---
 
