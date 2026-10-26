@@ -22,6 +22,7 @@ from calibre.ebooks.metadata.sources.base import Source
 BASE_URL = 'https://www.livelib.ru'
 BETA_BASE_URL = 'https://beta.livelib.ru'
 FANTLAB_BASE_URL = 'https://api.fantlab.ru'
+FANTLAB_API_BASE_URL = 'https://api.fantlab.ru'
 LITRES_API_BASE = 'https://api.litres.ru/foundation/api'
 LITRES_WEB_BASE = 'https://www.litres.ru'
 USER_AGENT = (
@@ -386,9 +387,23 @@ class LiveLibMetadata(Source):
         mi.has_cover = True
 
     def get_book_url(self, identifiers):
+        litres_id = identifiers.get('litres')
+        if litres_id:
+            return ('litres', litres_id, LITRES_WEB_BASE + '/book/' + litres_id)
         livelib_id = identifiers.get('livelib')
         if livelib_id:
             return ('livelib', livelib_id, BASE_URL + '/book/' + livelib_id)
+        fantlab_id = identifiers.get('fantlab')
+        if fantlab_id:
+            return ('fantlab', fantlab_id, FANTLAB_BASE_URL + '/edition' + fantlab_id)
+
+    def get_book_url_name(self, idtype, idval, url):
+        names = {
+            'litres': 'Litres',
+            'livelib': 'LiveLib',
+            'fantlab': 'FantLab',
+        }
+        return names.get(idtype, self.name)
 
     def id_from_url(self, url):
         match = re.search(r'livelib\.ru/book/([^/?#]+)', url or '')
@@ -749,7 +764,7 @@ class LiveLibMetadata(Source):
         query = ' '.join([query_title or ''] + list(query_authors or [])).strip()
         if not query:
             return []
-        url = FANTLAB_BASE_URL + '/search-txt?q=' + quote(query)
+        url = FANTLAB_API_BASE_URL + '/search-txt?q=' + quote(query)
         log.info('FantLab fallback search: ' + url)
         try:
             raw = self.fetch_url(url, timeout)
@@ -780,7 +795,7 @@ class LiveLibMetadata(Source):
                 'url': 'https:' + item.get('url') if (item.get('url') or '').startswith('//') else item.get('url'),
                 'comments': item.get('description') or '',
                 'rating': (item.get('stat') or {}).get('rating'),
-                'cover_url': FANTLAB_BASE_URL + item.get('image') if item.get('image') else None,
+                'cover_url': FANTLAB_API_BASE_URL + item.get('image') if item.get('image') else None,
                 'tags': [item.get('name_type')] if item.get('name_type') else [],
             })
         candidates.sort(key=lambda row: row['score'], reverse=True)
