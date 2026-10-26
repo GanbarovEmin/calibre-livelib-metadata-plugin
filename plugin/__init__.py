@@ -25,6 +25,10 @@ FANTLAB_BASE_URL = 'https://api.fantlab.ru'
 FANTLAB_API_BASE_URL = 'https://api.fantlab.ru'
 LITRES_API_BASE = 'https://api.litres.ru/foundation/api'
 LITRES_WEB_BASE = 'https://www.litres.ru'
+IDENTIFIER_TYPE_LITRES = 'litres'
+IDENTIFIER_TYPE_LIVELIB = 'livelib'
+IDENTIFIER_TYPE_FANTLAB = 'fantlab'
+IDENTIFIER_TYPE_ISBN = 'isbn'
 USER_AGENT = (
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) '
     'AppleWebKit/537.36 (KHTML, like Gecko) '
@@ -317,8 +321,12 @@ class LiveLibMetadata(Source):
 
     capabilities = frozenset(['identify', 'cover'])
     touched_fields = frozenset([
-        'title', 'authors', 'identifier:litres', 'identifier:livelib', 'identifier:fantlab',
-        'identifier:isbn', 'comments', 'publisher', 'pubdate', 'tags', 'rating', 'languages'
+        'title', 'authors',
+        'identifier:' + IDENTIFIER_TYPE_LITRES,
+        'identifier:' + IDENTIFIER_TYPE_LIVELIB,
+        'identifier:' + IDENTIFIER_TYPE_FANTLAB,
+        'identifier:' + IDENTIFIER_TYPE_ISBN,
+        'comments', 'publisher', 'pubdate', 'tags', 'rating', 'languages'
     ])
     has_html_comments = True
     supports_gzip_transfer_encoding = True
@@ -387,37 +395,37 @@ class LiveLibMetadata(Source):
         mi.has_cover = True
 
     def get_book_url(self, identifiers):
-        litres_id = identifiers.get('litres')
+        litres_id = identifiers.get(IDENTIFIER_TYPE_LITRES)
         if litres_id:
-            return ('litres', litres_id, LITRES_WEB_BASE + '/book/' + litres_id)
-        livelib_id = identifiers.get('livelib')
+            return (IDENTIFIER_TYPE_LITRES, litres_id, LITRES_WEB_BASE + '/book/' + litres_id)
+        livelib_id = identifiers.get(IDENTIFIER_TYPE_LIVELIB)
         if livelib_id:
-            return ('livelib', livelib_id, BASE_URL + '/book/' + livelib_id)
-        fantlab_id = identifiers.get('fantlab')
+            return (IDENTIFIER_TYPE_LIVELIB, livelib_id, BASE_URL + '/book/' + livelib_id)
+        fantlab_id = identifiers.get(IDENTIFIER_TYPE_FANTLAB)
         if fantlab_id:
-            return ('fantlab', fantlab_id, FANTLAB_BASE_URL + '/edition' + fantlab_id)
+            return (IDENTIFIER_TYPE_FANTLAB, fantlab_id, FANTLAB_BASE_URL + '/edition' + fantlab_id)
 
     def get_book_url_name(self, idtype, idval, url):
         names = {
-            'litres': 'Litres',
-            'livelib': 'LiveLib',
-            'fantlab': 'FantLab',
+            IDENTIFIER_TYPE_LITRES: 'Litres',
+            IDENTIFIER_TYPE_LIVELIB: 'LiveLib',
+            IDENTIFIER_TYPE_FANTLAB: 'FantLab',
         }
         return names.get(idtype, self.name)
 
     def id_from_url(self, url):
         match = re.search(r'livelib\.ru/book/([^/?#]+)', url or '')
         if match:
-            return ('livelib', match.group(1))
+            return (IDENTIFIER_TYPE_LIVELIB, match.group(1))
         return None
 
     def identify(self, log, result_queue, abort, title=None, authors=None,
                  identifiers=None, timeout=30):
         identifiers = identifiers or {}
-        direct_id = identifiers.get('livelib')
+        direct_id = identifiers.get(IDENTIFIER_TYPE_LIVELIB)
         candidates = []
 
-        litres_id = identifiers.get('litres')
+        litres_id = identifiers.get(IDENTIFIER_TYPE_LITRES)
         if litres_id:
             candidates.append({
                 'source': 'litres',
@@ -482,7 +490,7 @@ class LiveLibMetadata(Source):
                     log.exception('LiveLib detail failed for %s: %s' % (candidate['url'], as_unicode(err)))
                     mi = self.metadata_from_search_candidate(candidate)
                 if mi is not None and candidate.get('cover_url'):
-                    livelib_id = (mi.identifiers or {}).get('livelib') or livelib_id_from_url(candidate.get('url'))
+                    livelib_id = (mi.identifiers or {}).get(IDENTIFIER_TYPE_LIVELIB) or livelib_id_from_url(candidate.get('url'))
                     if livelib_id:
                         self.cache_identifier_to_cover_url(livelib_id, candidate['cover_url'])
                         mi.has_cover = True
@@ -564,7 +572,7 @@ class LiveLibMetadata(Source):
             mi.language = 'rus'
         litres_id = str(item.get('id') or candidate.get('id') or '')
         if litres_id:
-            mi.set_identifier('litres', litres_id)
+            mi.set_identifier(IDENTIFIER_TYPE_LITRES, litres_id)
         publishers = [p.get('full_name') for p in persons if p.get('role') == 'publisher' and p.get('full_name')]
         if publishers:
             mi.publisher = publishers[0]
@@ -810,7 +818,7 @@ class LiveLibMetadata(Source):
         mi.language = 'rus'
         livelib_id = livelib_id_from_url(candidate.get('url'))
         if livelib_id:
-            mi.set_identifier('livelib', livelib_id)
+            mi.set_identifier(IDENTIFIER_TYPE_LIVELIB, livelib_id)
         # Do not overwrite an existing annotation with a bare source link.
         if candidate.get('summary'):
             mi.comments = '<p>%s</p>' % as_unicode(candidate.get('summary')).strip()
@@ -829,7 +837,7 @@ class LiveLibMetadata(Source):
         mi.language = 'rus'
         fantlab_id = candidate.get('id')
         if fantlab_id:
-            mi.set_identifier('fantlab', str(fantlab_id))
+            mi.set_identifier(IDENTIFIER_TYPE_FANTLAB, str(fantlab_id))
         if candidate.get('comments'):
             mi.comments = '<p>%s</p>' % candidate['comments'].replace('\n', '<br/>')
         if candidate.get('tags'):
@@ -861,7 +869,7 @@ class LiveLibMetadata(Source):
 
         livelib_id = livelib_id_from_url(url) or livelib_id_from_url(data.get('url'))
         if livelib_id:
-            mi.set_identifier('livelib', livelib_id)
+            mi.set_identifier(IDENTIFIER_TYPE_LIVELIB, livelib_id)
 
         details = extract_livelib_page_details(raw)
 
@@ -916,13 +924,13 @@ class LiveLibMetadata(Source):
         return mi
 
     def get_cached_cover_url(self, identifiers):
-        litres_id = (identifiers or {}).get('litres')
+        litres_id = (identifiers or {}).get(IDENTIFIER_TYPE_LITRES)
         if litres_id:
             return self.cached_identifier_to_cover_url(litres_id)
-        livelib_id = (identifiers or {}).get('livelib')
+        livelib_id = (identifiers or {}).get(IDENTIFIER_TYPE_LIVELIB)
         if livelib_id:
             return self.cached_identifier_to_cover_url(livelib_id)
-        fantlab_id = (identifiers or {}).get('fantlab')
+        fantlab_id = (identifiers or {}).get(IDENTIFIER_TYPE_FANTLAB)
         if fantlab_id:
             return self.cached_identifier_to_cover_url(fantlab_id)
         return None
