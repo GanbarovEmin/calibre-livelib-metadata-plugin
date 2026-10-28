@@ -8,7 +8,7 @@ import re
 from datetime import datetime
 from html import escape, unescape
 from queue import Empty, Queue
-from urllib.parse import quote, urlencode, urljoin
+from urllib.parse import quote, urlencode, urljoin, urlsplit
 from urllib.request import Request, urlopen
 
 from lxml import html
@@ -21,9 +21,15 @@ from calibre.ebooks.metadata.sources.base import Source
 
 BASE_URL = 'https://www.livelib.ru'
 BETA_BASE_URL = 'https://beta.livelib.ru'
-FANTLAB_BASE_URL = 'https://api.fantlab.ru'
+FANTLAB_BASE_URL = 'https://fantlab.ru'
+FANTLAB_API_BASE_URL = 'https://api.fantlab.ru'
 LITRES_API_BASE = 'https://api.litres.ru/foundation/api'
 LITRES_WEB_BASE = 'https://www.litres.ru'
+IDENTIFIER_TYPE_LITRES = 'litres'
+IDENTIFIER_TYPE_LIVELIB = 'livelib'
+IDENTIFIER_TYPE_FANTLAB = 'fantlab'
+IDENTIFIER_TYPE_ISBN = 'isbn'
+FANTLAB_IDENTIFIER_PATTERN = re.compile(r'[a-z][a-z0-9_-]*\d+', re.IGNORECASE)
 USER_AGENT = (
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) '
     'AppleWebKit/537.36 (KHTML, like Gecko) '
@@ -173,6 +179,16 @@ def livelib_id_from_url(url):
     return (url or '').split('/book/', 1)[-1].split('?', 1)[0].split('#', 1)[0]
 
 
+def fantlab_identifier_from_url(url):
+    if not url:
+        return None
+    parsed = urlsplit(url)
+    if parsed.netloc.lower() not in ('api.fantlab.ru', 'fantlab.ru'):
+        return None
+    path = parsed.path.strip('/')
+    return path if FANTLAB_IDENTIFIER_PATTERN.fullmatch(path) else None
+
+
 def livelib_beta_url(url):
     livelib_id = livelib_id_from_url(url)
     return BETA_BASE_URL + '/book/' + livelib_id if livelib_id else url
@@ -316,8 +332,12 @@ class LiveLibMetadata(Source):
 
     capabilities = frozenset(['identify', 'cover'])
     touched_fields = frozenset([
-        'title', 'authors', 'identifier:litres', 'identifier:livelib', 'identifier:fantlab',
-        'identifier:isbn', 'comments', 'publisher', 'pubdate', 'tags', 'rating', 'languages'
+        'title', 'authors',
+        'identifier:' + IDENTIFIER_TYPE_LITRES,
+        'identifier:' + IDENTIFIER_TYPE_LIVELIB,
+        'identifier:' + IDENTIFIER_TYPE_FANTLAB,
+        'identifier:' + IDENTIFIER_TYPE_ISBN,
+        'comments', 'publisher', 'pubdate', 'tags', 'rating', 'languages'
     ])
     has_html_comments = True
     supports_gzip_transfer_encoding = True
@@ -386,23 +406,37 @@ class LiveLibMetadata(Source):
         mi.has_cover = True
 
     def get_book_url(self, identifiers):
-        livelib_id = identifiers.get('livelib')
+        litres_id = identifiers.get(IDENTIFIER_TYPE_LITRES)
+        if litres_id:
+            return (IDENTIFIER_TYPE_LITRES, litres_id, LITRES_WEB_BASE + '/book/' + litres_id)
+        livelib_id = identifiers.get(IDENTIFIER_TYPE_LIVELIB)
         if livelib_id:
-            return ('livelib', livelib_id, BASE_URL + '/book/' + livelib_id)
+            return (IDENTIFIER_TYPE_LIVELIB, livelib_id, BASE_URL + '/book/' + livelib_id)
+        fantlab_id = identifiers.get(IDENTIFIER_TYPE_FANTLAB)
+        if fantlab_id and FANTLAB_IDENTIFIER_PATTERN.fullmatch(as_unicode(fantlab_id)):
+            return (IDENTIFIER_TYPE_FANTLAB, fantlab_id, FANTLAB_BASE_URL + '/' + as_unicode(fantlab_id))
+
+    def get_book_url_name(self, idtype, idval, url):
+        names = {
+            IDENTIFIER_TYPE_LITRES: 'Litres',
+            IDENTIFIER_TYPE_LIVELIB: 'LiveLib',
+            IDENTIFIER_TYPE_FANTLAB: 'FantLab',
+        }
+        return names.get(idtype, self.name)
 
     def id_from_url(self, url):
         match = re.search(r'livelib\.ru/book/([^/?#]+)', url or '')
         if match:
-            return ('livelib', match.group(1))
+            return (IDENTIFIER_TYPE_LIVELIB, match.group(1))
         return None
 
     def identify(self, log, result_queue, abort, title=None, authors=None,
                  identifiers=None, timeout=30):
         identifiers = identifiers or {}
-        direct_id = identifiers.get('livelib')
+        direct_id = identifiers.get(IDENTIFIER_TYPE_LIVELIB)
         candidates = []
 
-        litres_id = identifiers.get('litres')
+        litres_id = identifiers.get(IDENTIFIER_TYPE_LITRES)
         if litres_id:
             candidates.append({
                 'source': 'litres',
@@ -467,7 +501,7 @@ class LiveLibMetadata(Source):
                     log.exception('LiveLib detail failed for %s: %s' % (candidate['url'], as_unicode(err)))
                     mi = self.metadata_from_search_candidate(candidate)
                 if mi is not None and candidate.get('cover_url'):
-                    livelib_id = (mi.identifiers or {}).get('livelib') or livelib_id_from_url(candidate.get('url'))
+                    livelib_id = (mi.identifiers or {}).get(IDENTIFIER_TYPE_LIVELIB) or livelib_id_from_url(candidate.get('url'))
                     if livelib_id:
                         self.cache_identifier_to_cover_url(livelib_id, candidate['cover_url'])
                         mi.has_cover = True
@@ -549,7 +583,7 @@ class LiveLibMetadata(Source):
             mi.language = 'rus'
         litres_id = str(item.get('id') or candidate.get('id') or '')
         if litres_id:
-            mi.set_identifier('litres', litres_id)
+            mi.set_identifier(IDENTIFIER_TYPE_LITRES, litres_id)
         publishers = [p.get('full_name') for p in persons if p.get('role') == 'publisher' and p.get('full_name')]
         if publishers:
             mi.publisher = publishers[0]
@@ -749,7 +783,7 @@ class LiveLibMetadata(Source):
         query = ' '.join([query_title or ''] + list(query_authors or [])).strip()
         if not query:
             return []
-        url = FANTLAB_BASE_URL + '/search-txt?q=' + quote(query)
+        url = FANTLAB_API_BASE_URL + '/search-txt?q=' + quote(query)
         log.info('FantLab fallback search: ' + url)
         try:
             raw = self.fetch_url(url, timeout)
@@ -760,6 +794,7 @@ class LiveLibMetadata(Source):
 
         candidates = []
         for item in payload.get('works') or []:
+            fantlab_identifier = fantlab_identifier_from_url(item.get('url'))
             title = item.get('name') or ''
             author_names = [
                 a.get('name') for a in ((item.get('creators') or {}).get('authors') or [])
@@ -777,10 +812,11 @@ class LiveLibMetadata(Source):
                 'title': title,
                 'authors': author_names or ['Unknown'],
                 'id': item.get('id'),
-                'url': 'https:' + item.get('url') if (item.get('url') or '').startswith('//') else item.get('url'),
+                'identifier': fantlab_identifier,
+                'url': FANTLAB_BASE_URL + '/' + fantlab_identifier if fantlab_identifier else None,
                 'comments': item.get('description') or '',
                 'rating': (item.get('stat') or {}).get('rating'),
-                'cover_url': FANTLAB_BASE_URL + item.get('image') if item.get('image') else None,
+                'cover_url': FANTLAB_API_BASE_URL + item.get('image') if item.get('image') else None,
                 'tags': [item.get('name_type')] if item.get('name_type') else [],
             })
         candidates.sort(key=lambda row: row['score'], reverse=True)
@@ -795,7 +831,7 @@ class LiveLibMetadata(Source):
         mi.language = 'rus'
         livelib_id = livelib_id_from_url(candidate.get('url'))
         if livelib_id:
-            mi.set_identifier('livelib', livelib_id)
+            mi.set_identifier(IDENTIFIER_TYPE_LIVELIB, livelib_id)
         # Do not overwrite an existing annotation with a bare source link.
         if candidate.get('summary'):
             mi.comments = '<p>%s</p>' % as_unicode(candidate.get('summary')).strip()
@@ -812,9 +848,10 @@ class LiveLibMetadata(Source):
     def metadata_from_fantlab_candidate(self, candidate):
         mi = Metadata(candidate.get('title') or '', candidate.get('authors') or ['Unknown'])
         mi.language = 'rus'
-        fantlab_id = candidate.get('id')
+        fantlab_id = candidate.get('identifier') or candidate.get('id')
         if fantlab_id:
-            mi.set_identifier('fantlab', str(fantlab_id))
+            fantlab_id = as_unicode(fantlab_id)
+            mi.set_identifier(IDENTIFIER_TYPE_FANTLAB, fantlab_id)
         if candidate.get('comments'):
             mi.comments = '<p>%s</p>' % candidate['comments'].replace('\n', '<br/>')
         if candidate.get('tags'):
@@ -826,7 +863,7 @@ class LiveLibMetadata(Source):
             pass
         cover_url = candidate.get('cover_url')
         if cover_url and fantlab_id:
-            self.cache_identifier_to_cover_url(str(fantlab_id), cover_url)
+            self.cache_identifier_to_cover_url(fantlab_id, cover_url)
             mi.has_cover = True
         return mi
 
@@ -846,7 +883,7 @@ class LiveLibMetadata(Source):
 
         livelib_id = livelib_id_from_url(url) or livelib_id_from_url(data.get('url'))
         if livelib_id:
-            mi.set_identifier('livelib', livelib_id)
+            mi.set_identifier(IDENTIFIER_TYPE_LIVELIB, livelib_id)
 
         details = extract_livelib_page_details(raw)
 
@@ -901,13 +938,13 @@ class LiveLibMetadata(Source):
         return mi
 
     def get_cached_cover_url(self, identifiers):
-        litres_id = (identifiers or {}).get('litres')
+        litres_id = (identifiers or {}).get(IDENTIFIER_TYPE_LITRES)
         if litres_id:
             return self.cached_identifier_to_cover_url(litres_id)
-        livelib_id = (identifiers or {}).get('livelib')
+        livelib_id = (identifiers or {}).get(IDENTIFIER_TYPE_LIVELIB)
         if livelib_id:
             return self.cached_identifier_to_cover_url(livelib_id)
-        fantlab_id = (identifiers or {}).get('fantlab')
+        fantlab_id = (identifiers or {}).get(IDENTIFIER_TYPE_FANTLAB)
         if fantlab_id:
             return self.cached_identifier_to_cover_url(fantlab_id)
         return None
